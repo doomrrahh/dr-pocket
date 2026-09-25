@@ -1,0 +1,12 @@
+# Node
+node_modules/
+web/.env
+web/data/
+
+# Xcode / generated project
+ios/DrPocket.xcodeproj/
+ios/build/
+ios/DerivedData/
+*.ipa
+xcuserdata/
+.DS_Store
