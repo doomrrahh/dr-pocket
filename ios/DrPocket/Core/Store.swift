@@ -127,7 +127,7 @@ struct Targets: Codable, Equatable {
 
     func save() {
         guard let data = try? JSONEncoder().encode(self) else { return }
-        UserDefaults.standard.set(data, forKey: key)
+        UserDefaults.standard.set(data, forKey: Self.key)
     }
 
     /// Formats a mg/dL value in whichever unit the person picked.

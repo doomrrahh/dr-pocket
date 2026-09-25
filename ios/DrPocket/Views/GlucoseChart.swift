@@ -19,92 +19,118 @@ struct GlucoseChart: View {
         return max(250, Int(ceil(Double(peak + 30) / 50) * 50))
     }
 
+    // Broken into small @ChartContentBuilder pieces: as one expression the whole
+    // chart is more than the type-checker will sit through.
+
+    @ChartContentBuilder
+    private var targetBand: some ChartContent {
+        RectangleMark(
+            xStart: .value("From", start),
+            xEnd: .value("To", Date()),
+            yStart: .value("Low", targets.low),
+            yEnd: .value("High", targets.high)
+        )
+        .foregroundStyle(Theme.inRange.opacity(0.10))
+
+        RuleMark(y: .value("High", targets.high))
+            .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 5]))
+            .foregroundStyle(Theme.high.opacity(0.35))
+
+        RuleMark(y: .value("Low", targets.low))
+            .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 5]))
+            .foregroundStyle(Theme.low.opacity(0.35))
+    }
+
+    @ChartContentBuilder
+    private var trace: some ChartContent {
+        ForEach(segments, id: \.first?.date) { segment in
+            ForEach(segment) { reading in
+                AreaMark(
+                    x: .value("Time", reading.date),
+                    yStart: .value("Floor", 0),
+                    yEnd: .value("Glucose", reading.value)
+                )
+                .foregroundStyle(areaGradient)
+                .interpolationMethod(.monotone)
+            }
+            ForEach(segment) { reading in
+                LineMark(
+                    x: .value("Time", reading.date),
+                    y: .value("Glucose", reading.value)
+                )
+                .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                .foregroundStyle(lineGradient)
+                .interpolationMethod(.monotone)
+            }
+        }
+    }
+
+    @ChartContentBuilder
+    private var latestPoint: some ChartContent {
+        if let latest = readings.last {
+            PointMark(
+                x: .value("Time", latest.date),
+                y: .value("Glucose", latest.value)
+            )
+            .symbolSize(90)
+            .foregroundStyle(Theme.color(for: latest.value, targets: targets))
+        }
+    }
+
+    @ChartContentBuilder
+    private var scrubber: some ChartContent {
+        if let selected {
+            RuleMark(x: .value("Time", selected.date))
+                .lineStyle(StrokeStyle(lineWidth: 1))
+                .foregroundStyle(Color.white.opacity(0.25))
+                .annotation(position: .top, overflowResolution: .init(x: .fitToChart, y: .disabled)) {
+                    calloutLabel(for: selected)
+                }
+
+            PointMark(
+                x: .value("Time", selected.date),
+                y: .value("Glucose", selected.value)
+            )
+            .symbolSize(120)
+            .foregroundStyle(.white)
+        }
+    }
+
+    private func calloutLabel(for reading: Reading) -> some View {
+        VStack(spacing: 2) {
+            Text(targets.format(reading.value))
+                .font(.callout.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(Theme.color(for: reading.value, targets: targets))
+            Text(reading.date, format: .dateTime.hour().minute())
+                .font(.caption2)
+                .foregroundStyle(Theme.muted)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+    }
+
+    private var areaGradient: LinearGradient {
+        LinearGradient(
+            colors: [Theme.accent.opacity(0.28), Theme.accent.opacity(0.0)],
+            startPoint: .top, endPoint: .bottom
+        )
+    }
+
+    private var lineGradient: LinearGradient {
+        LinearGradient(stops: gradientStops, startPoint: .bottom, endPoint: .top)
+    }
+
     var body: some View {
         Chart {
-            RectangleMark(
-                xStart: .value("From", start),
-                xEnd: .value("To", Date()),
-                yStart: .value("Low", targets.low),
-                yEnd: .value("High", targets.high)
-            )
-            .foregroundStyle(Theme.inRange.opacity(0.10))
-
-            RuleMark(y: .value("High", targets.high))
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 5]))
-                .foregroundStyle(Theme.high.opacity(0.35))
-
-            RuleMark(y: .value("Low", targets.low))
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 5]))
-                .foregroundStyle(Theme.low.opacity(0.35))
-
-            ForEach(segments, id: \.first?.date) { segment in
-                ForEach(segment) { reading in
-                    AreaMark(
-                        x: .value("Time", reading.date),
-                        yStart: .value("Floor", 0),
-                        yEnd: .value("Glucose", reading.value)
-                    )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Theme.accent.opacity(0.28), Theme.accent.opacity(0.0)],
-                            startPoint: .top, endPoint: .bottom
-                        )
-                    )
-                    .interpolationMethod(.monotone)
-
-                    LineMark(
-                        x: .value("Time", reading.date),
-                        y: .value("Glucose", reading.value)
-                    )
-                    .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-                    .foregroundStyle(
-                        LinearGradient(
-                            stops: gradientStops,
-                            startPoint: .bottom, endPoint: .top
-                        )
-                    )
-                    .interpolationMethod(.monotone)
-                }
-            }
-
-            if let latest = readings.last {
-                PointMark(
-                    x: .value("Time", latest.date),
-                    y: .value("Glucose", latest.value)
-                )
-                .symbolSize(90)
-                .foregroundStyle(Theme.color(for: latest.value, targets: targets))
-            }
-
-            if let selected {
-                RuleMark(x: .value("Time", selected.date))
-                    .lineStyle(StrokeStyle(lineWidth: 1))
-                    .foregroundStyle(Color.white.opacity(0.25))
-                    .annotation(position: .top, overflowResolution: .init(x: .fitToChart, y: .disabled)) {
-                        VStack(spacing: 2) {
-                            Text(targets.format(selected.value))
-                                .font(.callout.weight(.bold))
-                                .monospacedDigit()
-                                .foregroundStyle(Theme.color(for: selected.value, targets: targets))
-                            Text(selected.date, format: .dateTime.hour().minute())
-                                .font(.caption2)
-                                .foregroundStyle(Theme.muted)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(.ultraThinMaterial)
-                        )
-                    }
-
-                PointMark(
-                    x: .value("Time", selected.date),
-                    y: .value("Glucose", selected.value)
-                )
-                .symbolSize(120)
-                .foregroundStyle(.white)
-            }
+            targetBand
+            trace
+            latestPoint
+            scrubber
         }
         .chartXScale(domain: start...Date())
         .chartYScale(domain: 0...ceiling)
