@@ -234,9 +234,24 @@ struct CareLinkSnapshot: Decodable {
         let plgmLgsState: String?
     }
 
+    /// Readings the lenient scanner found when the typed fields came up empty, and the
+    /// decode error if the typed pass failed outright. Neither is part of the payload.
+    var recovered: [Reading] = []
+    var decodeError: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case lastSG, sgs, lastSGTrend, activeInsulin, markers, lastAlarm
+        case reservoirRemainingUnits, reservoirLevelPercent
+        case medicalDeviceBatteryLevelPercent, pumpBatteryLevelPercent, conduitBatteryLevel
+        case sensorDurationHours, sensorDurationMinutes, timeToNextCalibHours
+        case systemStatusMessage, pumpBannerState, lastConduitDateTime, clientTimeZoneName
+        case lastMedicalDeviceDataUpdateServerTime, sensorState, therapyAlgorithmState
+    }
+
     var trend: GlucoseTrend { GlucoseTrend(carelink: lastSGTrend) }
 
-    /// Valid readings, oldest first, with the latest reading folded in.
+    /// Valid readings, oldest first, with the latest reading folded in. Falls back to
+    /// whatever the scanner recovered when the known fields yield nothing.
     var readings: [Reading] {
         var out: [Reading] = []
         var seen = Set<Date>()
@@ -245,7 +260,21 @@ struct CareLinkSnapshot: Decodable {
             seen.insert(d)
             out.append(Reading(date: d, value: s.sg))
         }
+        if out.isEmpty { return recovered }
         return out.sorted { $0.date < $1.date }
+    }
+
+    /// An all-nil snapshot, used when a decode fails but readings were still recovered.
+    static var empty: CareLinkSnapshot {
+        CareLinkSnapshot(
+            lastSG: nil, sgs: nil, lastSGTrend: nil, activeInsulin: nil, markers: nil, lastAlarm: nil,
+            reservoirRemainingUnits: nil, reservoirLevelPercent: nil,
+            medicalDeviceBatteryLevelPercent: nil, pumpBatteryLevelPercent: nil, conduitBatteryLevel: nil,
+            sensorDurationHours: nil, sensorDurationMinutes: nil, timeToNextCalibHours: nil,
+            systemStatusMessage: nil, pumpBannerState: nil, lastConduitDateTime: nil,
+            clientTimeZoneName: nil, lastMedicalDeviceDataUpdateServerTime: nil,
+            sensorState: nil, therapyAlgorithmState: nil
+        )
     }
 
     var pumpBattery: Int? { medicalDeviceBatteryLevelPercent ?? pumpBatteryLevelPercent }

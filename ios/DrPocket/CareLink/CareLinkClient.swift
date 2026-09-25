@@ -49,6 +49,11 @@ actor CareLinkClient {
     private var cachedUser: CareLinkUser?
     private var cachedPatient: CareLinkPatient?
 
+    /// The last raw `/display/message` body, kept for the diagnostics screen and for the
+    /// fallback parser when the typed decode finds nothing.
+    private(set) var lastPayload: Data?
+    private(set) var lastRequestSummary: String?
+
     init(tokens: TokenSet? = nil) {
         self.tokens = tokens
     }
@@ -252,7 +257,34 @@ actor CareLinkClient {
             body["role"] = "patient"
         }
 
-        return try await postJSON(URL(string: ep.baseUrlCumulus + "/display/message")!, body: body)
+        let url = URL(string: ep.baseUrlCumulus + "/display/message")!
+        lastRequestSummary = "POST \(url.absoluteString)\nrole=\(body["role"] ?? "?") "
+            + "username=\(body["username"] ?? "?") patientId=\(body["patientId"] ?? "-")\n"
+            + "user role from CareLink: \(user.role ?? "nil")"
+
+        let data = try await postRaw(url, body: body)
+        lastPayload = data
+
+        var snapshot = try decodeSnapshot(data)
+        // Field names move around between pump models; if the typed decode found no
+        // readings, scan the payload for anything reading-shaped before giving up.
+        if snapshot.readings.isEmpty {
+            snapshot.recovered = ReadingExtractor.extract(from: data)
+        }
+        return snapshot
+    }
+
+    private func decodeSnapshot(_ data: Data) throws -> CareLinkSnapshot {
+        do {
+            return try JSONDecoder().decode(CareLinkSnapshot.self, from: data)
+        } catch {
+            // A decode failure should not cost us the readings we can still recover.
+            var empty = CareLinkSnapshot.empty
+            empty.recovered = ReadingExtractor.extract(from: data)
+            empty.decodeError = String(describing: error).prefix(300).description
+            if empty.recovered.isEmpty { throw error }
+            return empty
+        }
     }
 
     /// Who we are showing data for, once known.
@@ -285,13 +317,21 @@ actor CareLinkClient {
         return try await send(request)
     }
 
-    private func postJSON<T: Decodable>(_ url: URL, body: [String: String]) async throws -> T {
+    /// POST that hands back the raw body, so callers can both decode it and keep it.
+    private func postRaw(_ url: URL, body: [String: String]) async throws -> Data {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 30
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         headers(authorized: true).forEach { request.setValue($1, forHTTPHeaderField: $0) }
-        return try await send(request)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(code) else {
+            lastPayload = data
+            throw Failure.http(code, String((String(data: data, encoding: .utf8) ?? "").prefix(160)))
+        }
+        return data
     }
 
     private func postForm<T: Decodable>(_ url: URL?, form: [String: String], magIdentifier: String?) async throws -> T {

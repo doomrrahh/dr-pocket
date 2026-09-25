@@ -3,6 +3,7 @@ import SwiftUI
 struct DashboardView: View {
     @EnvironmentObject private var model: AppModel
     @State private var showSettings = false
+    @State private var showDiagnostics = false
 
     var body: some View {
         NavigationStack {
@@ -19,6 +20,16 @@ struct DashboardView: View {
 
                         if model.isStale, model.latest != nil {
                             StaleBanner(date: model.latest?.date)
+                        }
+
+                        // Signed in, nothing came back: say so plainly and offer the
+                        // screen that explains why, rather than showing empty dials.
+                        if model.readings.isEmpty, model.lastUpdate != nil {
+                            NoDataBanner(
+                                refresh: { Task { await model.forceRefresh() } },
+                                diagnose: { showDiagnostics = true },
+                                isRefreshing: model.isRefreshing
+                            )
                         }
 
                         GlucoseDial(
@@ -70,16 +81,33 @@ struct DashboardView: View {
                     LiveIndicator(isRefreshing: model.isRefreshing, isStale: model.isStale)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showSettings = true
-                    } label: {
-                        Image(systemName: "gearshape.fill")
+                    HStack(spacing: 14) {
+                        Button {
+                            Task { await model.forceRefresh() }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .rotationEffect(.degrees(model.isRefreshing ? 360 : 0))
+                                .animation(model.isRefreshing
+                                           ? .linear(duration: 1).repeatForever(autoreverses: false)
+                                           : .default,
+                                           value: model.isRefreshing)
+                        }
+                        .disabled(model.isRefreshing)
+
+                        Button {
+                            showSettings = true
+                        } label: {
+                            Image(systemName: "gearshape.fill")
+                        }
                     }
                     .tint(Theme.ink)
                 }
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView().environmentObject(model)
+            }
+            .sheet(isPresented: $showDiagnostics) {
+                DiagnosticsView().environmentObject(model)
             }
         }
         .tint(Theme.accent)
@@ -194,6 +222,53 @@ struct StaleBanner: View {
             Spacer(minLength: 0)
         }
         .card(padding: 14)
+    }
+}
+
+/// Shown when the account is connected but CareLink returned no glucose.
+struct NoDataBanner: View {
+    let refresh: () -> Void
+    let diagnose: () -> Void
+    let isRefreshing: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: "antenna.radiowaves.left.and.right.slash")
+                    .foregroundStyle(Theme.high)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Connected, but no readings")
+                        .font(.subheadline.weight(.semibold))
+                    Text("CareLink answered without any glucose data. That usually means the pump has not uploaded recently — or the payload uses fields this app does not know yet.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            HStack(spacing: 10) {
+                Button(action: refresh) {
+                    HStack(spacing: 6) {
+                        if isRefreshing { ProgressView().controlSize(.mini) }
+                        Text("Refresh now")
+                    }
+                    .font(.footnote.weight(.semibold))
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(Capsule().fill(Theme.accent.opacity(0.25)))
+                }
+                .disabled(isRefreshing)
+
+                Button(action: diagnose) {
+                    Text("See what it sent")
+                        .font(.footnote.weight(.semibold))
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(Capsule().fill(Color.white.opacity(0.08)))
+                }
+            }
+            .buttonStyle(.plain)
+            .tint(Theme.ink)
+        }
+        .card(padding: 16)
     }
 }
 

@@ -5,6 +5,8 @@ struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var confirmSignOut = false
+    @State private var confirmWipe = false
+    @State private var showDiagnostics = false
     @State private var export: ExportFile?
 
     var body: some View {
@@ -38,11 +40,42 @@ struct SettingsView: View {
                         LabeledContent("Last update", value: update.formatted(date: .omitted, time: .shortened))
                     }
                     LabeledContent("Readings stored", value: "\(model.readings.count)")
+                }
+
+                Section {
+                    Button {
+                        Task { await model.forceRefresh() }
+                    } label: {
+                        HStack {
+                            Label("Refresh now", systemImage: "arrow.clockwise")
+                            Spacer()
+                            if model.isRefreshing { ProgressView() }
+                        }
+                    }
+                    .disabled(model.isRefreshing)
+
+                    Button {
+                        showDiagnostics = true
+                    } label: {
+                        Label("Diagnostics", systemImage: "stethoscope")
+                    }
 
                     Button {
                         makeExport()
                     } label: {
                         Label("Export readings", systemImage: "square.and.arrow.up")
+                    }
+                } header: {
+                    Text("Data")
+                } footer: {
+                    Text("If the dashboard is empty, open Diagnostics — it shows exactly what CareLink sent back.")
+                }
+
+                Section {
+                    Button(role: .destructive) {
+                        confirmWipe = true
+                    } label: {
+                        Label("Clear stored readings", systemImage: "trash")
                     }
 
                     Button(role: .destructive) {
@@ -50,6 +83,8 @@ struct SettingsView: View {
                     } label: {
                         Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
                     }
+                } footer: {
+                    Text("Clearing keeps you signed in and re-downloads what CareLink still has. Signing out also removes the saved session.")
                 }
 
                 Section {
@@ -83,6 +118,16 @@ struct SettingsView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This clears the saved session and the readings stored on this device.")
+            }
+            .sheet(isPresented: $showDiagnostics) {
+                DiagnosticsView().environmentObject(model)
+            }
+            .confirmationDialog("Clear stored readings?",
+                                isPresented: $confirmWipe, titleVisibility: .visible) {
+                Button("Clear", role: .destructive) { model.clearStoredReadings() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Removes the readings cached on this device. You stay signed in.")
             }
             .sheet(item: $export) { file in
                 ShareSheet(items: [file.url])

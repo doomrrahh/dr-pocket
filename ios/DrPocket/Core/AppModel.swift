@@ -21,6 +21,8 @@ final class AppModel: NSObject, ObservableObject {
     @Published var range: ChartRange = .sixHours
     @Published private(set) var patientName: String?
     @Published private(set) var countries: [String] = []
+    @Published private(set) var lastFetchCount = 0
+    @Published private(set) var lastAddedCount = 0
 
     private let client: CareLinkClient
     private let history = HistoryStore()
@@ -85,7 +87,13 @@ final class AppModel: NSObject, ObservableObject {
             let tokens = try await client.signIn(country: country, presentationContext: self)
             Keychain.save(tokens)
             phase = .ready
-            await refresh()
+            // CareLink often has nothing queued for the first call right after a login,
+            // so try a few times before settling on "no data".
+            for attempt in 0..<3 {
+                await refresh()
+                if !readings.isEmpty { break }
+                if attempt < 2 { try? await Task.sleep(for: .seconds(3)) }
+            }
         } catch CareLinkClient.Failure.signInCancelled {
             // The person backed out; not an error worth shouting about.
         } catch {
@@ -120,11 +128,13 @@ final class AppModel: NSObject, ObservableObject {
         do {
             let snap = try await client.snapshot()
             snapshot = snap
-            history.merge(snap.readings)
+            let added = history.merge(snap.readings)
             readings = history.readings
             patientName = await client.displayName()
             lastUpdate = Date()
             errorMessage = nil
+            lastFetchCount = snap.readings.count
+            lastAddedCount = added
             if let tokens = await client.currentTokens { Keychain.save(tokens) }
         } catch CareLinkClient.Failure.sessionExpired {
             Keychain.clear()
@@ -137,7 +147,65 @@ final class AppModel: NSObject, ObservableObject {
         }
     }
 
+    /// Explicit "refresh now", ignoring the in-flight guard's quiet return so the button
+    /// always feels like it did something.
+    func forceRefresh() async {
+        await refresh()
+    }
+
+    /// Throws away stored readings but keeps the session, for when the cache looks wrong.
+    func clearStoredReadings() {
+        history.clear()
+        readings = []
+        snapshot = nil
+        lastUpdate = nil
+        Task { await refresh() }
+    }
+
     func exportData() -> Data? { history.exportJSON() }
+
+    /// Raw payload and request details, for the diagnostics screen.
+    func diagnostics() async -> Diagnostics {
+        let payload = await client.lastPayload
+        let request = await client.lastRequestSummary
+        return Diagnostics(
+            request: request,
+            summary: payload.map { ReadingExtractor.summarise($0) },
+            payload: payload.flatMap { prettyPrint($0) },
+            decodeError: snapshot?.decodeError,
+            storedCount: readings.count,
+            lastFetchCount: lastFetchCount
+        )
+    }
+
+    private func prettyPrint(_ data: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let pretty = try? JSONSerialization.data(withJSONObject: object,
+                                                       options: [.prettyPrinted, .sortedKeys]) else {
+            return String(data: data, encoding: .utf8)
+        }
+        return String(data: pretty, encoding: .utf8)
+    }
+
+    struct Diagnostics {
+        let request: String?
+        let summary: String?
+        let payload: String?
+        let decodeError: String?
+        let storedCount: Int
+        let lastFetchCount: Int
+
+        /// Everything as one block, for the copy button.
+        var combined: String {
+            var parts: [String] = ["Dr. Pocket diagnostics"]
+            if let request { parts.append("REQUEST\n" + request) }
+            if let summary { parts.append("SUMMARY\n" + summary) }
+            if let decodeError { parts.append("DECODE ERROR\n" + decodeError) }
+            parts.append("Stored readings: \(storedCount)   Last fetch: \(lastFetchCount)")
+            if let payload { parts.append("PAYLOAD\n" + payload) }
+            return parts.joined(separator: "\n\n")
+        }
+    }
 
     private func startTimer() {
         timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
