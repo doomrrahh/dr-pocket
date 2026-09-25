@@ -83,7 +83,7 @@ struct GlucoseChart: View {
             RuleMark(x: .value("Time", selected.date))
                 .lineStyle(StrokeStyle(lineWidth: 1))
                 .foregroundStyle(Color.white.opacity(0.25))
-                .annotation(position: .top, overflowResolution: .init(x: .fitToChart, y: .disabled)) {
+                .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
                     calloutLabel(for: selected)
                 }
 
